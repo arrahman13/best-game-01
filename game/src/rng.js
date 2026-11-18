@@ -1,19 +1,30 @@
-// A seeded random source (mulberry32) so a screenshot setup or a test run is
-// reproducible: the same seed deals the same match. Gameplay code takes its
-// randomness from here, never from Math.random directly.
+// rng.js — the match's dice, seeded so any run can be dealt again card for
+// card: staged screenshots, soak tests and bug reports all lean on the same
+// seed producing the same stream. Nothing in the game touches Math.random
+// for gameplay; it all draws from one of these.
+//
+// The generator is mulberry32: a 32-bit state advanced by a fixed odd
+// increment, then scrambled with two multiply-xorshift rounds. The exact
+// constants are load-bearing — change them and every seed deals a
+// different match.
 export function createRng(seed) {
-  let a = seed | 0;
-  function next() {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  const box = { state: seed | 0 };
+
+  function draw() {
+    box.state = (box.state + 0x6d2b79f5) | 0;
+    let z = box.state;
+    z = Math.imul(z ^ (z >>> 15), z | 1);
+    z ^= z + Math.imul(z ^ (z >>> 7), z | 61);
+    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
   }
+
   return {
-    next,
-    range(min, max) { return min + next() * (max - min); },
-    int(min, max) { return Math.floor(min + next() * (max - min + 1)); },
-    pick(list) { return list[Math.floor(next() * list.length) % list.length]; },
-    chance(p) { return next() < p; },
+    next: draw,
+    // A float somewhere in [lo, hi).
+    range(lo, hi) { return lo + draw() * (hi - lo); },
+    // A whole number in [lo, hi], both ends included.
+    int(lo, hi) { return lo + Math.floor(draw() * (hi - lo + 1)); },
+    pick(list) { return list[Math.floor(draw() * list.length)]; },
+    chance(p) { return draw() < p; },
   };
 }

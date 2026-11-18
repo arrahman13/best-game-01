@@ -1,64 +1,79 @@
-// Keyboard and mouse state, and the pointer lock the game plays under. Input
-// only records; the player controller reads the state once per fixed step, so
-// the simulation never depends on event timing.
+// input.js — ears and hands. This module only *records*: which keys are
+// down, which went down since the simulation last asked, how far the mouse
+// travelled, whether the trigger and the aim button are held. The player
+// controller polls it once per fixed step, so nothing about the game's
+// timing depends on when the browser happened to deliver an event.
+//
+// Two kinds of key state are kept apart on purpose. `keys` is the level
+// (is it down right now?) for movement; `tapped` is the edge (did it go
+// down since I last looked?) for one-shot actions like reloading or
+// swapping weapons, consumed through takePressed.
 export function createInput(canvas, onLockChange) {
-  const keys = new Set();
-  const pressed = new Set(); // keys that went down since the last step read them
-  let lookX = 0;
-  let lookY = 0;
-  let firing = false;
-  let aiming = false;
-  let locked = false;
+  const held = new Set();
+  const tapped = new Set();
+  const look = { x: 0, y: 0 };
+  const state = { locked: false, firing: false, aiming: false };
 
-  window.addEventListener('keydown', (event) => {
-    if (event.repeat) return;
-    keys.add(event.code);
-    pressed.add(event.code);
-    if (event.code === 'Space') event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => keys.delete(event.code));
-  window.addEventListener('blur', () => { keys.clear(); firing = false; aiming = false; });
+  function releaseButtons() {
+    state.firing = false;
+    state.aiming = false;
+  }
 
-  canvas.addEventListener('mousedown', (event) => {
-    if (!locked) return;
-    if (event.button === 0) firing = true;
-    if (event.button === 2) aiming = true;
+  window.addEventListener('keydown', (ev) => {
+    if (ev.repeat) return; // auto-repeat is not a fresh press
+    held.add(ev.code);
+    tapped.add(ev.code);
+    if (ev.code === 'Space') ev.preventDefault(); // keep the page from scrolling
   });
-  window.addEventListener('mouseup', (event) => {
-    if (event.button === 0) firing = false;
-    if (event.button === 2) aiming = false;
+  window.addEventListener('keyup', (ev) => held.delete(ev.code));
+  window.addEventListener('blur', () => {
+    held.clear();
+    releaseButtons();
   });
-  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-  window.addEventListener('mousemove', (event) => {
-    if (!locked) return;
-    lookX += event.movementX || 0;
-    lookY += event.movementY || 0;
+
+  canvas.addEventListener('mousedown', (ev) => {
+    if (!state.locked) return; // clicks before lock belong to the menus
+    if (ev.button === 0) state.firing = true;
+    else if (ev.button === 2) state.aiming = true;
   });
+  window.addEventListener('mouseup', (ev) => {
+    if (ev.button === 0) state.firing = false;
+    else if (ev.button === 2) state.aiming = false;
+  });
+  canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+
+  window.addEventListener('mousemove', (ev) => {
+    if (!state.locked) return;
+    look.x += ev.movementX || 0;
+    look.y += ev.movementY || 0;
+  });
+
   document.addEventListener('pointerlockchange', () => {
-    locked = document.pointerLockElement === canvas;
-    if (!locked) { firing = false; aiming = false; }
-    onLockChange(locked);
+    state.locked = document.pointerLockElement === canvas;
+    if (!state.locked) releaseButtons();
+    onLockChange(state.locked);
   });
 
   return {
-    keys,
-    get locked() { return locked; },
-    get firing() { return firing; },
-    get aiming() { return aiming; },
-    // One-shot key reads for the step loop: true once per physical press.
+    keys: held,
+    get locked() { return state.locked; },
+    get firing() { return state.firing; },
+    get aiming() { return state.aiming; },
+    // True exactly once per physical press of `code`.
     takePressed(code) {
-      const hit = pressed.has(code);
-      if (hit) pressed.delete(code);
-      return hit;
+      if (!tapped.has(code)) return false;
+      tapped.delete(code);
+      return true;
     },
-    clearPressed() { pressed.clear(); },
+    clearPressed() { tapped.clear(); },
+    // Hand over the mouse travel since the last step and zero the slate.
     takeLook() {
-      const out = { x: lookX, y: lookY };
-      lookX = 0;
-      lookY = 0;
+      const out = { x: look.x, y: look.y };
+      look.x = 0;
+      look.y = 0;
       return out;
     },
     requestLock() { canvas.requestPointerLock(); },
-    releaseLock() { if (locked) document.exitPointerLock(); },
+    releaseLock() { if (state.locked) document.exitPointerLock(); },
   };
 }
